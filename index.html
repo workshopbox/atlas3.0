@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atlas 3.0 - Logistics Scanner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    
+    <nav class="navbar">
+        <div class="nav-brand">
+            <svg class="atlas-logo" viewBox="0 0 200 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M25 5L5 40H45L25 5Z" fill="#2563EB"/>
+                <path d="M25 18L15 35H35L25 18Z" fill="#FFFFFF"/>
+                <path d="M42 28L50 40H34L42 28Z" fill="#60A5FA"/>
+                <text x="60" y="35" font-family="Inter, sans-serif" font-weight="700" font-size="28" fill="#1E293B">ATLAS <tspan fill="#2563EB">3.0</tspan></text>
+            </svg>
+        </div>
+        <div class="nav-info">
+            <span class="location-badge">DAP8 DSP</span>
+            <span class="user-badge">Package Scanner</span>
+        </div>
+    </nav>
+
+    <div class="main-wrapper">
+        <div class="container">
+            
+            <section class="card fade-in" id="report-section">
+                <div class="card-header">
+                    <div class="step-indicator">01</div>
+                    <div class="header-text">
+                        <h2>Upload Manifest</h2>
+                        <p class="info-text">Upload the <code>report.csv</code> containing tracking IDs and coords.</p>
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    <div class="upload-area">
+                        <div class="upload-icon">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                        </div>
+                        <input type="file" id="report-upload" accept=".csv" style="display: none;">
+                        <div class="upload-controls">
+                            <button id="report-upload-btn" class="btn btn-primary btn-lg">Select Report CSV</button>
+                            <span id="report-file-name" class="file-label">No file selected</span>
+                        </div>
+                    </div>
+                    <div id="report-status" class="report-status"></div>
+                </div>
+            </section>
+
+            <section class="card fade-in" id="scanning-section" style="display: none;">
+                <div class="card-header">
+                    <div class="step-indicator active">02</div>
+                    <div class="header-text">
+                        <h2>Package Scanning</h2>
+                        <p class="info-text">Scan packages to verify DSP assignment and sequence.</p>
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    <div class="scan-controls-wrapper">
+                        <div class="scan-input-group">
+                            <div class="input-icon-wrapper">
+                                <svg class="input-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                                    <path d="M3 3h18v18H3zM7 7h10M7 12h10M7 17h10"/>
+                                </svg>
+                                <input 
+                                    type="text" 
+                                    id="tracking-input" 
+                                    placeholder="Scan Tracking ID..." 
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <button id="scan-btn" class="btn btn-primary">Scan Package</button>
+                            <button id="clear-all-btn" class="btn btn-outline-danger">Reset Session</button>
+                        </div>
+                    </div>
+
+                    <div id="scan-result" class="scan-result"></div>
+
+                    <div class="data-panel">
+                        <div class="panel-header">
+                            <h3>Scanned Inventory <span class="badge-count" id="scan-count">0</span></h3>
+                            <div class="dsp-summary" id="dsp-summary"></div>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table id="scanned-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Tracking ID</th>
+                                        <th>DSP</th>
+                                        <th>Route</th>
+                                        <th>Time</th>
+                                        <th class="text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="scanned-tbody"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="export-section">
+                            <button id="export-scan-btn" class="btn btn-success icon-btn">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Export Scan Results
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card fade-in" id="verification-section">
+                <div class="card-header">
+                    <div class="step-indicator">03</div>
+                    <div class="header-text">
+                        <h2>Sequencing Verification</h2>
+                        <p class="info-text">Compare Scanned data against Search Result CSV.</p>
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    <div class="upload-area small-upload">
+                        <input type="file" id="csv-upload" accept=".csv" style="display: none;">
+                        <button id="upload-btn" class="btn btn-secondary">Upload Search Result CSV</button>
+                        <span id="file-name" class="file-label">No file selected</span>
+                    </div>
+
+                    <div id="verification-result"></div>
+
+                    <div class="comparison-results" id="comparison-section" style="display: none;">
+                        
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-value" id="total-compared">0</div>
+                                <div class="stat-label">Total Packages</div>
+                            </div>
+                            <div class="stat-card success">
+                                <div class="stat-value" id="matches-count">0</div>
+                                <div class="stat-label">Matches</div>
+                            </div>
+                            <div class="stat-card error">
+                                <div class="stat-value" id="mismatches-count">0</div>
+                                <div class="stat-label">Mismatches</div>
+                            </div>
+                            <div class="stat-card warning">
+                                <div class="stat-value" id="not-scanned-count">0</div>
+                                <div class="stat-label">Not Scanned</div>
+                            </div>
+                        </div>
+
+                        <div class="tabs-container">
+                            <div class="tabs">
+                                <button class="tab-btn active" data-tab="mismatches">Mismatches</button>
+                                <button class="tab-btn" data-tab="matches">Matches</button>
+                                <button class="tab-btn" data-tab="not-scanned">Not Scanned</button>
+                            </div>
+
+                            <div class="tab-content-wrapper">
+                                <div id="mismatches-tab" class="tab-panel active">
+                                    <div class="table-responsive">
+                                        <table id="mismatches-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>#</th>
+                                                    <th>Tracking ID</th>
+                                                    <th>Scanned DSP</th>
+                                                    <th>System DSP</th>
+                                                    <th>City</th>
+                                                    <th>Postal</th>
+                                                    <th>Sort Zone</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="mismatches-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div id="matches-tab" class="tab-panel">
+                                    <div class="table-responsive">
+                                        <table id="matches-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>#</th>
+                                                    <th>Tracking ID</th>
+                                                    <th>DSP</th>
+                                                    <th>Route</th>
+                                                    <th>City</th>
+                                                    <th>Sort Zone</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="matches-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div id="not-scanned-tab" class="tab-panel">
+                                    <div class="table-responsive">
+                                        <table id="not-scanned-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>#</th>
+                                                    <th>Tracking ID</th>
+                                                    <th>System DSP</th>
+                                                    <th>City</th>
+                                                    <th>Postal</th>
+                                                    <th>Sort Zone</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="not-scanned-tbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="export-section">
+                            <button id="export-comparison-btn" class="btn btn-success icon-btn">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Export Comparison Report
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="scripts.js"></script>
+</body>
+</html>
