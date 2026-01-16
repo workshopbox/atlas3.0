@@ -124,7 +124,7 @@ function findDSPForCoordinates(latitude, longitude) {
 function scanPackage(trackingId) {
     if (!trackingId || trackingId.trim() === '') {
         showScanResult('Please enter a tracking ID', 'error');
-        return;
+        return false;
     }
     
     trackingId = trackingId.trim().toUpperCase();
@@ -132,13 +132,13 @@ function scanPackage(trackingId) {
     // Check if report is loaded
     if (Object.keys(reportData).length === 0) {
         showScanResult('Please upload the report.csv file first!', 'error');
-        return;
+        return false;
     }
     
     // Check if already scanned
     if (scannedPackages.find(p => p.trackingId === trackingId)) {
         showScanResult(`Package ${trackingId} already scanned!`, 'error');
-        return;
+        return false;
     }
     
     // Get package info from uploaded report
@@ -146,14 +146,14 @@ function scanPackage(trackingId) {
     
     if (!packageInfo) {
         showScanResult(`Package ${trackingId} not found in uploaded report`, 'error');
-        return;
+        return false;
     }
     
     const dspInfo = findDSPForCoordinates(packageInfo.latitude, packageInfo.longitude);
     
     if (!dspInfo) {
         showScanResult(`Package ${trackingId} location outside all route boundaries`, 'error');
-        return;
+        return false;
     }
     
     const scannedPackage = {
@@ -177,6 +177,126 @@ function scanPackage(trackingId) {
     // Clear input and refocus
     document.getElementById('tracking-input').value = '';
     document.getElementById('tracking-input').focus();
+    
+    return true;
+}
+
+// ==================== BULK SCAN PACKAGES ====================
+function processBulkScan() {
+    const textarea = document.getElementById('bulk-tracking-input');
+    const text = textarea.value.trim();
+    
+    if (!text) {
+        showBulkScanStatus('Please enter tracking IDs', 'error');
+        return;
+    }
+    
+    // Parse tracking IDs - support newlines, commas, spaces, and tabs
+    const trackingIds = text
+        .split(/[\n,\s\t]+/)
+        .map(id => id.trim())
+        .filter(id => id.length > 0);
+    
+    if (trackingIds.length === 0) {
+        showBulkScanStatus('No valid tracking IDs found', 'error');
+        return;
+    }
+    
+    // Process all tracking IDs
+    let successCount = 0;
+    let failedCount = 0;
+    let duplicateCount = 0;
+    const failedIds = [];
+    
+    trackingIds.forEach((trackingId, index) => {
+        const cleanId = trackingId.trim().toUpperCase();
+        
+        // Check if already scanned
+        if (scannedPackages.find(p => p.trackingId === cleanId)) {
+            duplicateCount++;
+            return;
+        }
+        
+        // Get package info from uploaded report
+        const packageInfo = getPackageCoordinates(cleanId);
+        
+        if (!packageInfo) {
+            failedCount++;
+            failedIds.push(`${cleanId} (not in report)`);
+            return;
+        }
+        
+        const dspInfo = findDSPForCoordinates(packageInfo.latitude, packageInfo.longitude);
+        
+        if (!dspInfo) {
+            failedCount++;
+            failedIds.push(`${cleanId} (outside routes)`);
+            return;
+        }
+        
+        // Successfully scan the package
+        const scannedPackage = {
+            trackingId: cleanId,
+            dsp: dspInfo.dsp,
+            route: dspInfo.route,
+            routeName: dspInfo.routeName,
+            latitude: packageInfo.latitude,
+            longitude: packageInfo.longitude,
+            address: packageInfo.address,
+            city: packageInfo.city,
+            timestamp: new Date().toLocaleString()
+        };
+        
+        scannedPackages.push(scannedPackage);
+        successCount++;
+    });
+    
+    // Save and update UI
+    saveScannedPackages();
+    updateScannedTable();
+    
+    // Build status message
+    let statusMessage = `<strong>Bulk Scan Complete!</strong><br>`;
+    statusMessage += `✓ Successfully scanned: ${successCount}<br>`;
+    if (duplicateCount > 0) {
+        statusMessage += `⚠ Already scanned: ${duplicateCount}<br>`;
+    }
+    if (failedCount > 0) {
+        statusMessage += `✗ Failed: ${failedCount}<br>`;
+        if (failedIds.length > 0 && failedIds.length <= 10) {
+            statusMessage += `<div style="margin-top: 10px; font-size: 0.85em;">Failed IDs: ${failedIds.join(', ')}</div>`;
+        } else if (failedIds.length > 10) {
+            statusMessage += `<div style="margin-top: 10px; font-size: 0.85em;">Failed IDs (first 10): ${failedIds.slice(0, 10).join(', ')}...</div>`;
+        }
+    }
+    
+    showBulkScanStatus(statusMessage, successCount > 0 ? 'success' : 'error');
+    
+    // Clear textarea if all successful
+    if (failedCount === 0) {
+        setTimeout(() => {
+            closeBulkScanModal();
+        }, 2000);
+    }
+}
+
+function showBulkScanStatus(message, type) {
+    const statusDiv = document.getElementById('bulk-scan-status');
+    statusDiv.innerHTML = `<div class="result-box result-${type}">${message}</div>`;
+}
+
+// ==================== BULK SCAN MODAL ====================
+function openBulkScanModal() {
+    const modal = document.getElementById('bulk-scan-modal');
+    modal.classList.add('show');
+    document.getElementById('bulk-tracking-input').value = '';
+    document.getElementById('bulk-scan-status').innerHTML = '';
+    document.getElementById('bulk-tracking-input').focus();
+}
+
+function closeBulkScanModal() {
+    const modal = document.getElementById('bulk-scan-modal');
+    modal.classList.remove('show');
 }
 
 // ==================== GET PACKAGE COORDINATES FROM REPORT ====================
@@ -655,6 +775,21 @@ function initializeEventListeners() {
         if (e.key === 'Enter') {
             const trackingId = e.target.value;
             scanPackage(trackingId);
+        }
+    });
+    
+    // Bulk scan button
+    document.getElementById('bulk-scan-btn').addEventListener('click', openBulkScanModal);
+    
+    // Bulk scan modal buttons
+    document.getElementById('close-modal').addEventListener('click', closeBulkScanModal);
+    document.getElementById('cancel-bulk-btn').addEventListener('click', closeBulkScanModal);
+    document.getElementById('process-bulk-btn').addEventListener('click', processBulkScan);
+    
+    // Close modal when clicking outside
+    document.getElementById('bulk-scan-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'bulk-scan-modal') {
+            closeBulkScanModal();
         }
     });
     
