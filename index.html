@@ -6,27 +6,70 @@
     <title>Atlas 3.0 - Logistics Scanner</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyCwoFkcvIQqR_0ePlOv2mkehHc9zdR8Ljs",
+            authDomain: "atlasseq.firebaseapp.com",
+            projectId: "atlasseq",
+            storageBucket: "atlasseq.firebasestorage.app",
+            messagingSenderId: "407494251455",
+            appId: "1:407494251455:web:f80d7c25a632764fc3470a"
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        
+        // Make available globally
+        window.firebaseApp = app;
+        window.firebaseDb = db;
+    </script>
 </head>
 <body>
     
-    <nav class="navbar">
-        <div class="nav-brand">
-            <svg class="atlas-logo" viewBox="0 0 200 50" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M25 5L5 40H45L25 5Z" fill="#2563EB"/>
-                <path d="M25 18L15 35H35L25 18Z" fill="#FFFFFF"/>
-                <path d="M42 28L50 40H34L42 28Z" fill="#60A5FA"/>
-                <text x="60" y="35" font-family="Inter, sans-serif" font-weight="700" font-size="28" fill="#1E293B">ATLAS <tspan fill="#2563EB">3.0</tspan></text>
-            </svg>
-        </div>
-        <div class="nav-info">
-            <span class="location-badge">DAP8 DSP</span>
-            <span class="user-badge">Package Scanner</span>
-        </div>
-    </nav>
-
     <div class="main-wrapper">
         <div class="container">
             
+            <!-- Polygon Upload Section -->
+            <section class="card fade-in" id="polygon-section">
+                <div class="card-header">
+                    <div class="step-indicator">00</div>
+                    <div class="header-text">
+                        <h2>Upload Route Polygons (Optional)</h2>
+                        <p class="info-text">Upload custom route polygon JSON to override default routes.</p>
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    <div class="upload-area small-upload">
+                        <input type="file" id="polygon-upload" accept=".json" style="display: none;">
+                        <button id="polygon-upload-btn" class="btn btn-secondary">Upload Polygon JSON</button>
+                        <span id="polygon-file-name" class="file-label">No file selected</span>
+                    </div>
+                    <div id="polygon-status" class="polygon-status"></div>
+                    
+                    <!-- DSP Detection Results -->
+                    <div id="dsp-detection-section" style="display: none;">
+                        <div class="detection-panel">
+                            <div class="panel-header">
+                                <h3>Detected DSPs & Routes</h3>
+                            </div>
+                            
+                            <div id="dsp-detection-results" class="dsp-detection-grid"></div>
+                            
+                            <div class="detection-actions">
+                                <button id="confirm-polygons-btn" class="btn btn-success">✓ Confirm & Use These Routes</button>
+                                <button id="report-polygon-error-btn" class="btn btn-outline-danger">⚠ Report Error/Missing DSP</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section class="card fade-in" id="report-section">
                 <div class="card-header">
                     <div class="step-indicator">01</div>
@@ -85,6 +128,10 @@
                     </div>
 
                     <div id="scan-result" class="scan-result"></div>
+                    
+                    <!-- Confidence & Warning Display -->
+                    <div id="scan-confidence" class="scan-confidence" style="display: none;"></div>
+                    <div id="scan-warning" class="scan-warning" style="display: none;"></div>
 
                     <div class="data-panel">
                         <div class="panel-header">
@@ -253,6 +300,47 @@
             <div class="modal-footer">
                 <button id="process-bulk-btn" class="btn btn-primary btn-lg">Process Bulk Scan</button>
                 <button id="cancel-bulk-btn" class="btn btn-outline">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Polygon Error Report Modal -->
+    <div id="polygon-error-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Report Polygon Issue</h2>
+                <button class="modal-close" id="close-error-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="info-text">What's the issue with the uploaded polygons?</p>
+                
+                <div class="error-report-section">
+                    <label class="form-label">Issue Type:</label>
+                    <select id="error-type" class="form-select">
+                        <option value="missing">Missing DSP</option>
+                        <option value="incorrect">Incorrect Routes</option>
+                        <option value="other">Other Issue</option>
+                    </select>
+                    
+                    <label class="form-label" style="margin-top: 1rem;">Which DSP is affected?</label>
+                    <input type="text" id="affected-dsp" class="form-input" placeholder="e.g., AMTP, ABFB, BBGH, NALG, MDTR">
+                    
+                    <label class="form-label" style="margin-top: 1rem;">Description:</label>
+                    <textarea id="error-description" class="form-textarea" rows="4" placeholder="Describe the issue..."></textarea>
+                    
+                    <div style="margin-top: 1.5rem;">
+                        <p class="info-text">Upload the correct JSON file for this DSP:</p>
+                        <input type="file" id="correction-upload" accept=".json" style="display: none;">
+                        <button id="correction-upload-btn" class="btn btn-secondary" style="margin-top: 0.5rem;">Upload Correction JSON</button>
+                        <span id="correction-file-name" class="file-label">No file selected</span>
+                    </div>
+                </div>
+                
+                <div id="correction-status" class="correction-status"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="apply-correction-btn" class="btn btn-primary btn-lg">Apply Correction</button>
+                <button id="cancel-error-btn" class="btn btn-outline">Cancel</button>
             </div>
         </div>
     </div>

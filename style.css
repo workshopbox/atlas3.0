@@ -51,54 +51,10 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* --- Navbar --- */
-.navbar {
-    background: var(--bg-card);
-    height: 70px;
-    padding: 0 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    box-shadow: var(--shadow-sm);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
-
-.atlas-logo {
-    height: 40px;
-    width: auto;
-}
-
-.nav-info {
-    display: flex;
-    gap: 10px;
-}
-
-.location-badge, .user-badge {
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-}
-
-.location-badge {
-    background: #EFF6FF;
-    color: var(--primary);
-    border: 1px solid #DBEAFE;
-}
-
-.user-badge {
-    background: #F8FAFC;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-}
-
 /* --- Layout --- */
 .main-wrapper {
     padding: 2rem;
-    min-height: calc(100vh - 70px);
+    min-height: 100vh;
 }
 
 .container {
@@ -661,14 +617,6 @@ tr:hover td {
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
-    .navbar {
-        padding: 0 1rem;
-    }
-    
-    .nav-info {
-        display: none; /* Hide secondary info on mobile */
-    }
-
     .main-wrapper {
         padding: 1rem;
     }
@@ -699,4 +647,263 @@ tr:hover td {
     .modal-footer {
         flex-direction: column;
     }
+}
+
+/* --- DSP Detection Panel --- */
+.detection-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-top: 2rem;
+    background: white;
+}
+
+.dsp-detection-grid {
+    padding: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.dsp-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    background: #F8FAFC;
+    transition: var(--transition);
+}
+
+.dsp-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.dsp-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.dsp-card-name {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--text-main);
+}
+
+.dsp-card-status {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.dsp-card-status.detected {
+    background: var(--success-light);
+    color: var(--success-text);
+}
+
+.dsp-card-body {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.route-count {
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.route-list {
+    margin-top: 0.5rem;
+    padding-left: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.route-list li {
+    margin: 0.25rem 0;
+}
+
+.detection-actions {
+    padding: 1.5rem;
+    background: #F8FAFC;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.polygon-status {
+    margin-top: 1rem;
+}
+
+/* --- Form Elements --- */
+.form-label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    margin-bottom: 0.5rem;
+}
+
+.form-select,
+.form-input,
+.form-textarea {
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: 'Inter', sans-serif;
+    transition: var(--transition);
+}
+
+.form-select:focus,
+.form-input:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.error-report-section {
+    margin-top: 1rem;
+}
+
+.correction-status {
+    margin-top: 1rem;
+}
+
+/* --- Additional Modal Styles --- */
+.modal-content.large {
+    max-width: 800px;
+}
+
+/* --- Confidence Indicators --- */
+.scan-confidence {
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+    border: 2px solid;
+    animation: slideDown 0.3s ease;
+}
+
+.confidence-high {
+    background: var(--success-light);
+    border-color: var(--success);
+    color: var(--success-text);
+}
+
+.confidence-medium {
+    background: var(--warning-light);
+    border-color: var(--warning);
+    color: var(--warning-text);
+}
+
+.confidence-low {
+    background: var(--danger-light);
+    border-color: var(--danger);
+    color: var(--danger-text);
+}
+
+.confidence-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.confidence-icon {
+    font-size: 1.5rem;
+}
+
+.confidence-details {
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+}
+
+/* --- Warning Display --- */
+.scan-warning {
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+    background: #FEF3C7;
+    border: 2px solid var(--warning);
+    color: var(--warning-text);
+    animation: slideDown 0.3s ease;
+}
+
+.warning-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+.warning-icon {
+    font-size: 1.5rem;
+}
+
+.warning-details {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: white;
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.warning-dsp-comparison {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.warning-dsp-item {
+    flex: 1;
+    min-width: 150px;
+}
+
+.warning-dsp-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+    color: var(--text-muted);
+}
+
+.warning-dsp-value {
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.warning-actions {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.75rem;
+}
+
+/* --- Historical Badge --- */
+.historical-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 4px 10px;
+    background: var(--danger-light);
+    color: var(--danger-text);
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-left: 0.5rem;
 }

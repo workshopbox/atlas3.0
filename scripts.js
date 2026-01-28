@@ -1,8 +1,64 @@
+// ==================== FIREBASE & DATA STORAGE ====================
+// Firebase will be initialized from index.html
+let db = null;
+
+// Wait for Firebase to be ready
+function waitForFirebase() {
+    return new Promise((resolve) => {
+        const checkFirebase = setInterval(() => {
+            if (window.firebaseDb) {
+                db = window.firebaseDb;
+                clearInterval(checkFirebase);
+                resolve();
+            }
+        }, 100);
+    });
+}
+
+// Known mismatch zones based on historical data
+const MISMATCH_ZONES = {
+    'MDTR-NALG-Border': {
+        description: 'Northern corridor (Bruck, Oberaich, Friesach)',
+        polygonDSP: 'MDTR',
+        likelyAmazonDSP: 'NALG',
+        cities: ['BRUCK AN DER MUR', 'OBERAICH', 'FRIESACH', 'KAPFENBERG'],
+        postalCodes: ['8600', '8114'],
+        priority: 'HIGH'
+    },
+    'AMTP-ABFB-Graz': {
+        description: 'Graz urban center',
+        polygonDSP: 'AMTP',
+        likelyAmazonDSP: 'ABFB',
+        cities: ['GRAZ'],
+        postalCodes: ['8010', '8044', '8047'],
+        priority: 'HIGH'
+    },
+    'ABFB-BBGH-Border': {
+        description: 'Southern region (St. Martin)',
+        polygonDSP: 'ABFB',
+        likelyAmazonDSP: 'BBGH',
+        cities: ['ST. MARTIN IM SULMTAL', 'ST MARTIN IM SULMTAL'],
+        postalCodes: ['8543'],
+        priority: 'MEDIUM'
+    },
+    'NALG-BBGH-Border': {
+        description: 'Graz periphery',
+        polygonDSP: 'NALG',
+        likelyAmazonDSP: 'BBGH',
+        cities: ['GRAZ'],
+        postalCodes: ['8054'],
+        priority: 'LOW'
+    }
+};
+
 // ==================== DATA STORAGE ====================
 let scannedPackages = [];
 let routePolygons = [];
 let csvData = [];
 let reportData = {}; // Stores all packages from report.csv
+let uploadedPolygonData = null; // Stores uploaded polygon JSON
+let correctionData = null; // Stores correction JSON
+let mismatchHistory = {}; // Historical mismatch data
 
 // DSP route mapping from JSON files
 const DSP_JSON_FILES = {
@@ -45,7 +101,9 @@ function normalizeDSPName(dspName) {
 }
 
 // ==================== INITIALIZATION ====================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await waitForFirebase();
+    await loadHistoricalMismatches();
     loadRoutePolygons();
     loadScannedPackages();
     initializeEventListeners();
@@ -85,6 +143,222 @@ async function loadRoutePolygons() {
     }
 }
 
+// ==================== POLYGON UPLOAD & DETECTION ====================
+function handlePolygonUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    document.getElementById('polygon-file-name').textContent = file.name;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const jsonData = JSON.parse(e.target.result);
+            uploadedPolygonData = jsonData;
+            detectDSPsFromPolygon(jsonData);
+        } catch (error) {
+            showPolygonStatus('Invalid JSON file format', 'error');
+        }
+    };
+    reader.readAsText(file);
+}
+
+function detectDSPsFromPolygon(jsonData) {
+    if (!jsonData.features || !Array.isArray(jsonData.features)) {
+        showPolygonStatus('Invalid GeoJSON structure', 'error');
+        return;
+    }
+    
+    const dspRoutes = {};
+    
+    jsonData.features.forEach(feature => {
+        const routeName = feature.properties?.name || 'Unknown';
+        
+        // Extract DSP from route name (e.g., "1. AMTP - CA_A / CZ_A" -> "AMTP")
+        const match = routeName.match(/\d+\.\s*([A-Z]+)/);
+        if (match) {
+            const dspCode = match[1];
+            
+            if (!dspRoutes[dspCode]) {
+                dspRoutes[dspCode] = {
+                    routes: [],
+                    count: 0
+                };
+            }
+            
+            dspRoutes[dspCode].routes.push(routeName);
+            dspRoutes[dspCode].count++;
+        }
+    });
+    
+    displayDSPDetection(dspRoutes, jsonData.features.length);
+}
+
+function displayDSPDetection(dspRoutes, totalRoutes) {
+    const detectionSection = document.getElementById('dsp-detection-section');
+    const resultsDiv = document.getElementById('dsp-detection-results');
+    
+    resultsDiv.innerHTML = '';
+    
+    // Sort DSPs by name
+    const sortedDSPs = Object.keys(dspRoutes).sort();
+    
+    sortedDSPs.forEach(dspCode => {
+        const dspData = dspRoutes[dspCode];
+        
+        const card = document.createElement('div');
+        card.className = 'dsp-card';
+        card.innerHTML = `
+            <div class="dsp-card-header">
+                <span class="dsp-card-name">${dspCode}</span>
+                <span class="dsp-card-status detected">✓ Detected</span>
+            </div>
+            <div class="dsp-card-body">
+                <div class="route-count">${dspData.count} route${dspData.count !== 1 ? 's' : ''}</div>
+                <ul class="route-list">
+                    ${dspData.routes.map(route => `<li>${route}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+        resultsDiv.appendChild(card);
+    });
+    
+    detectionSection.style.display = 'block';
+    showPolygonStatus(`✓ Successfully detected ${sortedDSPs.length} DSPs with ${totalRoutes} total routes`, 'success');
+}
+
+function showPolygonStatus(message, type) {
+    const statusDiv = document.getElementById('polygon-status');
+    statusDiv.innerHTML = `<div class="status-box status-${type}">${message}</div>`;
+}
+
+function confirmPolygons() {
+    if (!uploadedPolygonData) {
+        alert('No polygon data to confirm');
+        return;
+    }
+    
+    // Clear existing polygons and load the uploaded ones
+    routePolygons = [];
+    
+    uploadedPolygonData.features.forEach((feature, index) => {
+        const coords = feature.geometry.coordinates[0];
+        const routeName = feature.properties?.name || `Route ${index + 1}`;
+        const sequenceOrder = feature.properties?.sequenceOrder ?? index;
+        
+        // Extract DSP from route name
+        const match = routeName.match(/\d+\.\s*([A-Z]+)/);
+        const dspCode = match ? match[1] : 'UNKNOWN';
+        
+        routePolygons.push({
+            dsp: dspCode,
+            routeNumber: sequenceOrder + 1,
+            routeName: routeName,
+            coordinates: coords
+        });
+    });
+    
+    showPolygonStatus(`✓ Successfully loaded ${routePolygons.length} routes! You can now proceed with scanning.`, 'success');
+    
+    // Hide detection section after confirmation
+    setTimeout(() => {
+        document.getElementById('dsp-detection-section').style.display = 'none';
+    }, 2000);
+}
+
+// ==================== POLYGON ERROR REPORTING ====================
+function openPolygonErrorModal() {
+    const modal = document.getElementById('polygon-error-modal');
+    modal.classList.add('show');
+    document.getElementById('error-type').value = 'missing';
+    document.getElementById('affected-dsp').value = '';
+    document.getElementById('error-description').value = '';
+    document.getElementById('correction-file-name').textContent = 'No file selected';
+    document.getElementById('correction-status').innerHTML = '';
+    correctionData = null;
+}
+
+function closePolygonErrorModal() {
+    const modal = document.getElementById('polygon-error-modal');
+    modal.classList.remove('show');
+}
+
+function handleCorrectionUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    document.getElementById('correction-file-name').textContent = file.name;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const jsonData = JSON.parse(e.target.result);
+            correctionData = jsonData;
+            showCorrectionStatus('✓ Correction file loaded successfully', 'success');
+        } catch (error) {
+            showCorrectionStatus('Invalid JSON file format', 'error');
+            correctionData = null;
+        }
+    };
+    reader.readAsText(file);
+}
+
+function showCorrectionStatus(message, type) {
+    const statusDiv = document.getElementById('correction-status');
+    statusDiv.innerHTML = `<div class="status-box status-${type}">${message}</div>`;
+}
+
+function applyCorrection() {
+    const errorType = document.getElementById('error-type').value;
+    const affectedDSP = document.getElementById('affected-dsp').value.trim().toUpperCase();
+    const description = document.getElementById('error-description').value.trim();
+    
+    if (!affectedDSP) {
+        showCorrectionStatus('Please specify which DSP is affected', 'error');
+        return;
+    }
+    
+    if (!correctionData) {
+        showCorrectionStatus('Please upload a correction JSON file', 'error');
+        return;
+    }
+    
+    // Remove existing routes for the affected DSP
+    routePolygons = routePolygons.filter(route => route.dsp !== affectedDSP);
+    
+    // Add routes from correction file
+    let addedCount = 0;
+    correctionData.features.forEach((feature, index) => {
+        const coords = feature.geometry.coordinates[0];
+        const routeName = feature.properties?.name || `${affectedDSP} Route ${index + 1}`;
+        const sequenceOrder = feature.properties?.sequenceOrder ?? index;
+        
+        routePolygons.push({
+            dsp: affectedDSP,
+            routeNumber: sequenceOrder + 1,
+            routeName: routeName,
+            coordinates: coords
+        });
+        addedCount++;
+    });
+    
+    showCorrectionStatus(`✓ Applied correction: ${addedCount} routes added/updated for ${affectedDSP}`, 'success');
+    
+    // Update the detection display if it's visible
+    if (uploadedPolygonData) {
+        // Merge correction data into uploaded polygon data
+        if (errorType === 'missing') {
+            uploadedPolygonData.features.push(...correctionData.features);
+        }
+        detectDSPsFromPolygon(uploadedPolygonData);
+    }
+    
+    // Close modal after a short delay
+    setTimeout(() => {
+        closePolygonErrorModal();
+    }, 2000);
+}
+
 // ==================== POINT IN POLYGON CHECK ====================
 function pointInPolygon(point, polygon) {
     const [lon, lat] = point;
@@ -118,6 +392,272 @@ function findDSPForCoordinates(latitude, longitude) {
     }
     
     return null;
+}
+
+// ==================== FIREBASE: HISTORICAL MISMATCH TRACKING ====================
+async function loadHistoricalMismatches() {
+    try {
+        // Import Firestore functions
+        const { collection, getDocs } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        const querySnapshot = await getDocs(collection(db, 'mismatch_history'));
+        mismatchHistory = {};
+        
+        querySnapshot.forEach((doc) => {
+            mismatchHistory[doc.id] = doc.data();
+        });
+        
+        console.log(`Loaded ${Object.keys(mismatchHistory).length} historical mismatch records`);
+    } catch (error) {
+        console.error('Error loading historical mismatches:', error);
+        // Fallback to localStorage
+        const saved = localStorage.getItem('mismatchHistory');
+        if (saved) {
+            mismatchHistory = JSON.parse(saved);
+        }
+    }
+}
+
+async function saveMismatchToHistory(mismatchData) {
+    try {
+        // Import Firestore functions
+        const { collection, doc, setDoc, updateDoc, increment } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // Create unique key based on coordinates (rounded to ~100m precision)
+        const coordKey = `${mismatchData.lat.toFixed(3)}_${mismatchData.lon.toFixed(3)}`;
+        
+        const docData = {
+            trackingId: mismatchData.trackingId,
+            polygonDSP: mismatchData.polygonDSP,
+            amazonDSP: mismatchData.amazonDSP,
+            city: mismatchData.city,
+            postal: mismatchData.postal,
+            latitude: mismatchData.lat,
+            longitude: mismatchData.lon,
+            lastSeen: new Date().toISOString(),
+            count: 1
+        };
+        
+        // Check if this location already exists
+        if (mismatchHistory[coordKey]) {
+            // Update existing record
+            await updateDoc(doc(db, 'mismatch_history', coordKey), {
+                lastSeen: new Date().toISOString(),
+                count: increment(1),
+                trackingId: mismatchData.trackingId // Update with latest tracking ID
+            });
+            mismatchHistory[coordKey].count++;
+            mismatchHistory[coordKey].lastSeen = new Date().toISOString();
+        } else {
+            // Create new record
+            await setDoc(doc(db, 'mismatch_history', coordKey), docData);
+            mismatchHistory[coordKey] = docData;
+        }
+        
+        console.log(`Saved mismatch to Firebase: ${mismatchData.trackingId}`);
+        
+        // Also save to localStorage as backup
+        localStorage.setItem('mismatchHistory', JSON.stringify(mismatchHistory));
+        
+    } catch (error) {
+        console.error('Error saving mismatch to Firebase:', error);
+        // Fallback to localStorage only
+        const coordKey = `${mismatchData.lat.toFixed(3)}_${mismatchData.lon.toFixed(3)}`;
+        if (!mismatchHistory[coordKey]) {
+            mismatchHistory[coordKey] = {
+                ...mismatchData,
+                lastSeen: new Date().toISOString(),
+                count: 1
+            };
+        } else {
+            mismatchHistory[coordKey].count++;
+            mismatchHistory[coordKey].lastSeen = new Date().toISOString();
+        }
+        localStorage.setItem('mismatchHistory', JSON.stringify(mismatchHistory));
+    }
+}
+
+// ==================== PRIORITY 1: SMART WARNING SYSTEM ====================
+function checkMismatchZone(city, postal, detectedDSP) {
+    const cityUpper = city.toUpperCase().trim();
+    const postalClean = postal.trim();
+    
+    for (const [zoneName, zone] of Object.entries(MISMATCH_ZONES)) {
+        // Check if this package is in a known mismatch zone
+        const cityMatch = zone.cities.some(c => cityUpper.includes(c) || c.includes(cityUpper));
+        const postalMatch = zone.postalCodes.includes(postalClean);
+        
+        if ((cityMatch || postalMatch) && detectedDSP === zone.polygonDSP) {
+            return {
+                warning: true,
+                zoneName: zoneName,
+                description: zone.description,
+                polygonDSP: zone.polygonDSP,
+                likelyAmazonDSP: zone.likelyAmazonDSP,
+                priority: zone.priority
+            };
+        }
+    }
+    
+    return { warning: false };
+}
+
+// ==================== PRIORITY 2: CONFIDENCE SCORE SYSTEM ====================
+function calculateConfidenceScore(packageInfo, detectedDSP, coords) {
+    let confidence = 100;
+    let reasons = [];
+    
+    // Check if in known mismatch zone
+    const mismatchZone = checkMismatchZone(packageInfo.city, packageInfo.postal, detectedDSP);
+    if (mismatchZone.warning) {
+        if (mismatchZone.priority === 'HIGH') {
+            confidence -= 40;
+            reasons.push(`Known ${mismatchZone.priority} mismatch zone: ${mismatchZone.description}`);
+        } else if (mismatchZone.priority === 'MEDIUM') {
+            confidence -= 25;
+            reasons.push(`Known ${mismatchZone.priority} mismatch zone: ${mismatchZone.description}`);
+        } else {
+            confidence -= 15;
+            reasons.push(`Known ${mismatchZone.priority} mismatch zone: ${mismatchZone.description}`);
+        }
+    }
+    
+    // Check historical mismatches
+    const coordKey = `${coords.latitude.toFixed(3)}_${coords.longitude.toFixed(3)}`;
+    const history = mismatchHistory[coordKey];
+    
+    if (history && history.polygonDSP === detectedDSP) {
+        const historyPenalty = Math.min(30, history.count * 10);
+        confidence -= historyPenalty;
+        reasons.push(`Historical mismatches: ${history.count}x (last: ${new Date(history.lastSeen).toLocaleDateString()})`);
+    }
+    
+    // Ensure confidence doesn't go below 0
+    confidence = Math.max(0, confidence);
+    
+    return {
+        score: confidence,
+        level: confidence >= 85 ? 'HIGH' : confidence >= 60 ? 'MEDIUM' : 'LOW',
+        reasons: reasons
+    };
+}
+
+// ==================== PRIORITY 3: HISTORICAL LEARNING ====================
+function checkHistoricalMismatch(coords, detectedDSP) {
+    const coordKey = `${coords.latitude.toFixed(3)}_${coords.longitude.toFixed(3)}`;
+    const history = mismatchHistory[coordKey];
+    
+    if (history && history.polygonDSP === detectedDSP && history.count >= 1) {
+        return {
+            hasHistory: true,
+            count: history.count,
+            amazonDSP: history.amazonDSP,
+            lastSeen: history.lastSeen,
+            message: `This location has mismatched ${history.count} time${history.count > 1 ? 's' : ''} before. ` +
+                     `Amazon assigned to ${history.amazonDSP} instead of ${history.polygonDSP}.`
+        };
+    }
+    
+    return { hasHistory: false };
+}
+
+// ==================== DISPLAY CONFIDENCE & WARNINGS ====================
+function displayConfidenceScore(confidence, packageInfo) {
+    const confidenceDiv = document.getElementById('scan-confidence');
+    
+    let icon = '';
+    let className = '';
+    let levelText = '';
+    
+    if (confidence.level === 'HIGH') {
+        icon = '✅';
+        className = 'confidence-high';
+        levelText = 'High Confidence';
+    } else if (confidence.level === 'MEDIUM') {
+        icon = '⚠️';
+        className = 'confidence-medium';
+        levelText = 'Medium Confidence';
+    } else {
+        icon = '🔴';
+        className = 'confidence-low';
+        levelText = 'Low Confidence';
+    }
+    
+    let html = `
+        <div class="${className}">
+            <div class="confidence-header">
+                <span class="confidence-icon">${icon}</span>
+                <span>${levelText} (${confidence.score}%)</span>
+            </div>
+    `;
+    
+    if (confidence.reasons.length > 0) {
+        html += `<div class="confidence-details">`;
+        confidence.reasons.forEach(reason => {
+            html += `<div>• ${reason}</div>`;
+        });
+        html += `</div>`;
+    }
+    
+    html += `</div>`;
+    
+    confidenceDiv.innerHTML = html;
+    confidenceDiv.style.display = 'block';
+    
+    // Auto-hide after 8 seconds for high confidence
+    if (confidence.level === 'HIGH') {
+        setTimeout(() => {
+            confidenceDiv.style.display = 'none';
+        }, 8000);
+    }
+}
+
+function displayMismatchWarning(mismatchZone, historicalData, packageInfo, detectedDSP) {
+    const warningDiv = document.getElementById('scan-warning');
+    
+    let suggestedDSP = mismatchZone.likelyAmazonDSP;
+    
+    // If we have historical data, use that instead
+    if (historicalData && historicalData.hasHistory) {
+        suggestedDSP = historicalData.amazonDSP;
+    }
+    
+    let html = `
+        <div class="warning-header">
+            <span class="warning-icon">⚠️</span>
+            <span>LIKELY MISMATCH DETECTED</span>
+            ${historicalData && historicalData.hasHistory ? 
+                `<span class="historical-badge">🔄 ${historicalData.count}x Historical</span>` : ''}
+        </div>
+        <div style="margin-top: 0.5rem; font-weight: 600;">
+            ${mismatchZone.description}
+        </div>
+        <div class="warning-details">
+            <div class="warning-dsp-comparison">
+                <div class="warning-dsp-item">
+                    <div class="warning-dsp-label">Your Polygon Says:</div>
+                    <div class="warning-dsp-value" style="color: var(--text-muted);">${detectedDSP}</div>
+                </div>
+                <div class="warning-dsp-item">
+                    <div class="warning-dsp-label">Amazon Usually Assigns:</div>
+                    <div class="warning-dsp-value" style="color: var(--danger);">${suggestedDSP}</div>
+                </div>
+            </div>
+            ${historicalData && historicalData.hasHistory ? `
+                <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #FDE68A;">
+                    <strong>📊 Historical Data:</strong> ${historicalData.message}
+                </div>
+            ` : ''}
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #FDE68A;">
+                <strong>⚠️ Recommendation:</strong> Verify this package in the Search Results CSV before final processing to ensure correct DSP assignment.
+            </div>
+        </div>
+    `;
+    
+    warningDiv.innerHTML = html;
+    warningDiv.style.display = 'block';
+    
+    // Don't auto-hide warnings - user needs to see them
 }
 
 // ==================== SCAN PACKAGE ====================
@@ -156,6 +696,26 @@ function scanPackage(trackingId) {
         return false;
     }
     
+    // ==================== PRIORITY 2: CALCULATE CONFIDENCE SCORE ====================
+    const confidence = calculateConfidenceScore(packageInfo, dspInfo.dsp, packageInfo);
+    
+    // ==================== PRIORITY 1: CHECK FOR MISMATCH WARNINGS ====================
+    const mismatchZone = checkMismatchZone(packageInfo.city, packageInfo.postal, dspInfo.dsp);
+    
+    // ==================== PRIORITY 3: CHECK HISTORICAL DATA ====================
+    const historicalData = checkHistoricalMismatch(packageInfo, dspInfo.dsp);
+    
+    // Display confidence score
+    displayConfidenceScore(confidence, packageInfo);
+    
+    // Display warning if in mismatch zone or has historical mismatches
+    if (mismatchZone.warning || historicalData.hasHistory) {
+        displayMismatchWarning(mismatchZone, historicalData, packageInfo, dspInfo.dsp);
+    } else {
+        // Clear warning if no issues
+        document.getElementById('scan-warning').style.display = 'none';
+    }
+    
     const scannedPackage = {
         trackingId: trackingId,
         dsp: dspInfo.dsp,
@@ -165,14 +725,22 @@ function scanPackage(trackingId) {
         longitude: packageInfo.longitude,
         address: packageInfo.address,
         city: packageInfo.city,
-        timestamp: new Date().toLocaleString()
+        timestamp: new Date().toLocaleString(),
+        confidence: confidence.score,
+        confidenceLevel: confidence.level,
+        hasWarning: mismatchZone.warning || historicalData.hasHistory
     };
     
     scannedPackages.push(scannedPackage);
     saveScannedPackages();
     updateScannedTable();
     
-    showScanResult(`✓ ${trackingId} → ${dspInfo.dsp} (Route ${dspInfo.route})`, 'success');
+    let resultMessage = `✓ ${trackingId} → ${dspInfo.dsp} (Route ${dspInfo.route})`;
+    if (confidence.level === 'LOW') {
+        resultMessage += ` - ⚠️ Low Confidence`;
+    }
+    
+    showScanResult(resultMessage, confidence.level === 'LOW' ? 'error' : 'success');
     
     // Clear input and refocus
     document.getElementById('tracking-input').value = '';
@@ -206,7 +774,9 @@ function processBulkScan() {
     let successCount = 0;
     let failedCount = 0;
     let duplicateCount = 0;
+    let lowConfidenceCount = 0;
     const failedIds = [];
+    const lowConfidenceIds = [];
     
     trackingIds.forEach((trackingId, index) => {
         const cleanId = trackingId.trim().toUpperCase();
@@ -234,6 +804,17 @@ function processBulkScan() {
             return;
         }
         
+        // Calculate confidence
+        const confidence = calculateConfidenceScore(packageInfo, dspInfo.dsp, packageInfo);
+        const mismatchZone = checkMismatchZone(packageInfo.city, packageInfo.postal, dspInfo.dsp);
+        const historicalData = checkHistoricalMismatch(packageInfo, dspInfo.dsp);
+        
+        // Track low confidence packages
+        if (confidence.level === 'LOW' || mismatchZone.warning) {
+            lowConfidenceCount++;
+            lowConfidenceIds.push(`${cleanId} (${packageInfo.city})`);
+        }
+        
         // Successfully scan the package
         const scannedPackage = {
             trackingId: cleanId,
@@ -244,7 +825,10 @@ function processBulkScan() {
             longitude: packageInfo.longitude,
             address: packageInfo.address,
             city: packageInfo.city,
-            timestamp: new Date().toLocaleString()
+            timestamp: new Date().toLocaleString(),
+            confidence: confidence.score,
+            confidenceLevel: confidence.level,
+            hasWarning: mismatchZone.warning || historicalData.hasHistory
         };
         
         scannedPackages.push(scannedPackage);
@@ -261,6 +845,14 @@ function processBulkScan() {
     if (duplicateCount > 0) {
         statusMessage += `⚠ Already scanned: ${duplicateCount}<br>`;
     }
+    if (lowConfidenceCount > 0) {
+        statusMessage += `🔴 Low confidence warnings: ${lowConfidenceCount}<br>`;
+        if (lowConfidenceIds.length <= 5) {
+            statusMessage += `<div style="margin-top: 10px; font-size: 0.85em; color: var(--danger);">⚠️ Review these: ${lowConfidenceIds.join(', ')}</div>`;
+        } else {
+            statusMessage += `<div style="margin-top: 10px; font-size: 0.85em; color: var(--danger);">⚠️ ${lowConfidenceCount} packages need review. Check the scanned list.</div>`;
+        }
+    }
     if (failedCount > 0) {
         statusMessage += `✗ Failed: ${failedCount}<br>`;
         if (failedIds.length > 0 && failedIds.length <= 10) {
@@ -270,10 +862,10 @@ function processBulkScan() {
         }
     }
     
-    showBulkScanStatus(statusMessage, successCount > 0 ? 'success' : 'error');
+    showBulkScanStatus(statusMessage, successCount > 0 ? (lowConfidenceCount > 0 ? 'error' : 'success') : 'error');
     
-    // Clear textarea if all successful
-    if (failedCount === 0) {
+    // Don't auto-close if there are low confidence packages
+    if (failedCount === 0 && lowConfidenceCount === 0) {
         setTimeout(() => {
             closeBulkScanModal();
         }, 2000);
@@ -555,13 +1147,26 @@ function compareWithScannedPackages() {
                 sortZone
             });
         } else {
-            mismatches.push({
+            const mismatchData = {
                 trackingId,
                 scannedDSP: scannedPkg.dsp,
                 systemDSP: systemDSP || 'NOT ASSIGNED',
                 city,
                 postal,
                 sortZone
+            };
+            mismatches.push(mismatchData);
+            
+            // ==================== PRIORITY 3: SAVE MISMATCH TO FIREBASE ====================
+            // Save this mismatch to historical database
+            saveMismatchToHistory({
+                trackingId: trackingId,
+                polygonDSP: scannedPkg.dsp,
+                amazonDSP: systemDSP,
+                city: city,
+                postal: postal,
+                lat: scannedPkg.latitude,
+                lon: scannedPkg.longitude
             });
         }
     });
@@ -756,6 +1361,42 @@ function switchTab(tabName) {
 
 // ==================== EVENT LISTENERS ====================
 function initializeEventListeners() {
+    // Polygon upload button
+    document.getElementById('polygon-upload-btn').addEventListener('click', () => {
+        document.getElementById('polygon-upload').click();
+    });
+    
+    // Polygon file upload
+    document.getElementById('polygon-upload').addEventListener('change', handlePolygonUpload);
+    
+    // Confirm polygons button
+    document.getElementById('confirm-polygons-btn').addEventListener('click', confirmPolygons);
+    
+    // Report polygon error button
+    document.getElementById('report-polygon-error-btn').addEventListener('click', openPolygonErrorModal);
+    
+    // Polygon error modal buttons
+    document.getElementById('close-error-modal').addEventListener('click', closePolygonErrorModal);
+    document.getElementById('cancel-error-btn').addEventListener('click', closePolygonErrorModal);
+    
+    // Correction upload button
+    document.getElementById('correction-upload-btn').addEventListener('click', () => {
+        document.getElementById('correction-upload').click();
+    });
+    
+    // Correction file upload
+    document.getElementById('correction-upload').addEventListener('change', handleCorrectionUpload);
+    
+    // Apply correction button
+    document.getElementById('apply-correction-btn').addEventListener('click', applyCorrection);
+    
+    // Close error modal when clicking outside
+    document.getElementById('polygon-error-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'polygon-error-modal') {
+            closePolygonErrorModal();
+        }
+    });
+    
     // Report upload button
     document.getElementById('report-upload-btn').addEventListener('click', () => {
         document.getElementById('report-upload').click();
