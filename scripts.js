@@ -2,6 +2,9 @@
 // Firebase will be initialized from index.html
 let db = null;
 
+// Session ID to identify different scanning sessions
+const SESSION_ID = `session_${new Date().toISOString().split('T')[0]}_${Date.now()}`;
+
 // Wait for Firebase to be ready
 function waitForFirebase() {
     return new Promise((resolve) => {
@@ -104,9 +107,12 @@ function normalizeDSPName(dspName) {
 document.addEventListener('DOMContentLoaded', async () => {
     await waitForFirebase();
     await loadHistoricalMismatches();
+    await loadSharedScannedPackages(); // Load packages from Firebase
     loadRoutePolygons();
-    loadScannedPackages();
     initializeEventListeners();
+    
+    // Set up real-time listener for scanned packages
+    setupRealtimeListener();
 });
 
 // ==================== LOAD ROUTE POLYGONS ====================
@@ -732,7 +738,13 @@ function scanPackage(trackingId) {
     };
     
     scannedPackages.push(scannedPackage);
+    
+    // Save to Firebase (shared with all users)
+    await saveScannedPackageToFirebase(scannedPackage);
+    
+    // Also save to localStorage as backup
     saveScannedPackages();
+    
     updateScannedTable();
     
     let resultMessage = `✓ ${trackingId} → ${dspInfo.dsp} (Route ${dspInfo.route})`;
@@ -835,8 +847,22 @@ function processBulkScan() {
         successCount++;
     });
     
-    // Save and update UI
+    // Save all to Firebase (in batch)
+    const savePromises = [];
+    scannedPackages.slice(-successCount).forEach(pkg => {
+        savePromises.push(saveScannedPackageToFirebase(pkg));
+    });
+    
+    try {
+        await Promise.all(savePromises);
+        console.log(`Saved ${successCount} packages to Firebase`);
+    } catch (error) {
+        console.error('Error saving bulk packages to Firebase:', error);
+    }
+    
+    // Also save to localStorage as backup
     saveScannedPackages();
+    
     updateScannedTable();
     
     // Build status message
@@ -947,19 +973,33 @@ function updateDSPSummary() {
 }
 
 // ==================== DELETE PACKAGE ====================
-function deletePackage(index) {
+async function deletePackage(index) {
     if (confirm('Are you sure you want to delete this package?')) {
+        const trackingId = scannedPackages[index].trackingId;
+        
         scannedPackages.splice(index, 1);
+        
+        // Delete from Firebase
+        await deleteScannedPackageFromFirebase(trackingId);
+        
+        // Also update localStorage
         saveScannedPackages();
+        
         updateScannedTable();
     }
 }
 
 // ==================== CLEAR ALL ====================
-function clearAllPackages() {
-    if (confirm('Are you sure you want to clear all scanned packages?')) {
+async function clearAllPackages() {
+    if (confirm('Are you sure you want to clear all scanned packages? This will affect all users!')) {
         scannedPackages = [];
+        
+        // Clear from Firebase
+        await clearAllScannedPackagesFromFirebase();
+        
+        // Also clear localStorage
         saveScannedPackages();
+        
         updateScannedTable();
         showScanResult('All packages cleared', 'success');
     }
@@ -976,7 +1016,179 @@ function showScanResult(message, type) {
     }, 3000);
 }
 
-// ==================== LOCAL STORAGE ====================
+// ==================== FIREBASE: SHARED SCANNED PACKAGES ====================
+async function loadSharedScannedPackages() {
+    try {
+        const { collection, query, where, getDocs, orderBy, limit } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // Get today's date
+        const today = new Date().toISOString().split('T')[0];
+        
+        // Load scanned packages from today
+        const q = query(
+            collection(db, 'scanned_packages'),
+            where('scanDate', '==', today),
+            orderBy('timestamp', 'desc'),
+            limit(500) // Limit to last 500 packages
+        );
+        
+        const querySnapshot = await getDocs(q);
+        scannedPackages = [];
+        
+        querySnapshot.forEach((doc) => {
+            scannedPackages.push(doc.data());
+        });
+        
+        // Sort by timestamp (newest first)
+        scannedPackages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        
+        updateScannedTable();
+        
+        console.log(`Loaded ${scannedPackages.length} shared scanned packages from Firebase`);
+        
+    } catch (error) {
+        console.error('Error loading shared scanned packages:', error);
+        // Fallback to localStorage
+        loadScannedPackages();
+    }
+}
+
+async function saveScannedPackageToFirebase(scannedPackage) {
+    try {
+        const { collection, doc, setDoc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // Use tracking ID as document ID for easy deduplication
+        const docId = scannedPackage.trackingId;
+        
+        // Add metadata
+        const packageData = {
+            ...scannedPackage,
+            scanDate: new Date().toISOString().split('T')[0], // Today's date
+            sessionId: SESSION_ID,
+            uploadedAt: new Date().toISOString()
+        };
+        
+        await setDoc(doc(db, 'scanned_packages', docId), packageData);
+        
+        console.log(`Saved package to Firebase: ${scannedPackage.trackingId}`);
+        
+    } catch (error) {
+        console.error('Error saving package to Firebase:', error);
+        // Still save to localStorage as backup
+        saveScannedPackages();
+    }
+}
+
+async function deleteScannedPackageFromFirebase(trackingId) {
+    try {
+        const { doc, deleteDoc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        await deleteDoc(doc(db, 'scanned_packages', trackingId));
+        
+        console.log(`Deleted package from Firebase: ${trackingId}`);
+        
+    } catch (error) {
+        console.error('Error deleting package from Firebase:', error);
+    }
+}
+
+async function clearAllScannedPackagesFromFirebase() {
+    try {
+        const { collection, query, where, getDocs, deleteDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // Get today's date
+        const today = new Date().toISOString().split('T')[0];
+        
+        // Find all packages from today
+        const q = query(
+            collection(db, 'scanned_packages'),
+            where('scanDate', '==', today)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        
+        // Delete all documents
+        const deletePromises = [];
+        querySnapshot.forEach((document) => {
+            deletePromises.push(deleteDoc(doc(db, 'scanned_packages', document.id)));
+        });
+        
+        await Promise.all(deletePromises);
+        
+        console.log(`Cleared ${deletePromises.length} packages from Firebase`);
+        
+    } catch (error) {
+        console.error('Error clearing packages from Firebase:', error);
+    }
+}
+
+// Real-time listener for new scans from other users
+async function setupRealtimeListener() {
+    try {
+        const { collection, query, where, onSnapshot } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        const today = new Date().toISOString().split('T')[0];
+        
+        const q = query(
+            collection(db, 'scanned_packages'),
+            where('scanDate', '==', today)
+        );
+        
+        onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added' && change.doc.data().sessionId !== SESSION_ID) {
+                    // Another user added a package
+                    const newPackage = change.doc.data();
+                    
+                    // Check if we don't already have it
+                    if (!scannedPackages.find(p => p.trackingId === newPackage.trackingId)) {
+                        scannedPackages.unshift(newPackage); // Add to beginning
+                        updateScannedTable();
+                        
+                        // Show notification
+                        showScanResult(`📦 New scan from another user: ${newPackage.trackingId} → ${newPackage.dsp}`, 'success');
+                        
+                        // Pulse the sync indicator
+                        updateSyncStatus('active');
+                    }
+                }
+                
+                if (change.type === 'removed') {
+                    // Package was deleted
+                    const trackingId = change.doc.id;
+                    scannedPackages = scannedPackages.filter(p => p.trackingId !== trackingId);
+                    updateScannedTable();
+                }
+            });
+        });
+        
+        console.log('Real-time listener active - you will see scans from other users!');
+        updateSyncStatus('active');
+        
+    } catch (error) {
+        console.error('Error setting up real-time listener:', error);
+        updateSyncStatus('error');
+    }
+}
+
+function updateSyncStatus(status) {
+    const syncStatusEl = document.getElementById('sync-status');
+    if (!syncStatusEl) return;
+    
+    syncStatusEl.classList.remove('syncing', 'error');
+    
+    if (status === 'syncing') {
+        syncStatusEl.classList.add('syncing');
+        syncStatusEl.querySelector('span').textContent = 'Syncing...';
+    } else if (status === 'error') {
+        syncStatusEl.classList.add('error');
+        syncStatusEl.querySelector('span').textContent = 'Offline';
+    } else {
+        syncStatusEl.querySelector('span').textContent = 'Live Sync';
+    }
+}
+
+// ==================== LOCAL STORAGE (BACKUP) ====================
 function saveScannedPackages() {
     localStorage.setItem('scannedPackages', JSON.stringify(scannedPackages));
 }
