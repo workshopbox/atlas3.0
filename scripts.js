@@ -667,7 +667,7 @@ function displayMismatchWarning(mismatchZone, historicalData, packageInfo, detec
 }
 
 // ==================== SCAN PACKAGE ====================
-function scanPackage(trackingId) {
+async function scanPackage(trackingId) {
     if (!trackingId || trackingId.trim() === '') {
         showScanResult('Please enter a tracking ID', 'error');
         return false;
@@ -762,7 +762,7 @@ function scanPackage(trackingId) {
 }
 
 // ==================== BULK SCAN PACKAGES ====================
-function processBulkScan() {
+async function processBulkScan() {
     const textarea = document.getElementById('bulk-tracking-input');
     const text = textarea.value.trim();
     
@@ -947,9 +947,17 @@ function updateScannedTable() {
             <td><span class="dsp-badge dsp-${pkg.dsp.toLowerCase()}">${pkg.dsp}</span></td>
             <td>Route ${pkg.route}</td>
             <td>${pkg.timestamp}</td>
-            <td><button class="delete-btn" onclick="deletePackage(${index})">Delete</button></td>
+            <td><button class="delete-btn" data-index="${index}">Delete</button></td>
         `;
         tbody.appendChild(row);
+    });
+    
+    // Add event listeners to delete buttons
+    tbody.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const index = parseInt(e.target.getAttribute('data-index'));
+            await deletePackage(index);
+        });
     });
 }
 
@@ -1618,16 +1626,16 @@ function initializeEventListeners() {
     document.getElementById('report-upload').addEventListener('change', handleReportUpload);
     
     // Scan button
-    document.getElementById('scan-btn').addEventListener('click', () => {
+    document.getElementById('scan-btn').addEventListener('click', async () => {
         const trackingId = document.getElementById('tracking-input').value;
-        scanPackage(trackingId);
+        await scanPackage(trackingId);
     });
     
     // Enter key for scanning
-    document.getElementById('tracking-input').addEventListener('keypress', (e) => {
+    document.getElementById('tracking-input').addEventListener('keypress', async (e) => {
         if (e.key === 'Enter') {
             const trackingId = e.target.value;
-            scanPackage(trackingId);
+            await scanPackage(trackingId);
         }
     });
     
@@ -1637,7 +1645,9 @@ function initializeEventListeners() {
     // Bulk scan modal buttons
     document.getElementById('close-modal').addEventListener('click', closeBulkScanModal);
     document.getElementById('cancel-bulk-btn').addEventListener('click', closeBulkScanModal);
-    document.getElementById('process-bulk-btn').addEventListener('click', processBulkScan);
+    document.getElementById('process-bulk-btn').addEventListener('click', async () => {
+        await processBulkScan();
+    });
     
     // Close modal when clicking outside
     document.getElementById('bulk-scan-modal').addEventListener('click', (e) => {
@@ -1647,7 +1657,9 @@ function initializeEventListeners() {
     });
     
     // Clear all button
-    document.getElementById('clear-all-btn').addEventListener('click', clearAllPackages);
+    document.getElementById('clear-all-btn').addEventListener('click', async () => {
+        await clearAllPackages();
+    });
     
     // Upload button
     document.getElementById('upload-btn').addEventListener('click', () => {
