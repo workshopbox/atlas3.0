@@ -171,6 +171,77 @@
                 </div>
             </section>
 
+            <section class="card fade-in" id="verification-mode-section" style="display: none;">
+                <div class="card-header">
+                    <div class="step-indicator">02B</div>
+                    <div class="header-text">
+                        <h2>Mismatch Verification Mode</h2>
+                        <p class="info-text">Rescan packages to identify which ones mismatched with Amazon's system.</p>
+                    </div>
+                    <button id="exit-verification-btn" class="btn btn-outline">Exit Verification Mode</button>
+                </div>
+
+                <div class="card-body">
+                    <div class="verification-info-panel">
+                        <div class="verification-status">
+                            <div class="status-item">
+                                <span class="status-label">Mismatches Found:</span>
+                                <span class="status-value" id="mismatch-total">0</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Verified:</span>
+                                <span class="status-value" id="verified-count">0</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Remaining:</span>
+                                <span class="status-value" id="remaining-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="scan-controls-wrapper">
+                        <div class="scan-input-group">
+                            <div class="input-icon-wrapper">
+                                <svg class="input-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+                                    <path d="M3 3h18v18H3zM7 7h10M7 12h10M7 17h10"/>
+                                </svg>
+                                <input 
+                                    type="text" 
+                                    id="verification-input" 
+                                    placeholder="Scan Package to Verify..." 
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <button id="verify-scan-btn" class="btn btn-primary">Verify Package</button>
+                        </div>
+                    </div>
+
+                    <div id="verification-result" class="verification-result"></div>
+
+                    <div class="data-panel">
+                        <div class="panel-header">
+                            <h3>Mismatch Details</h3>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table id="mismatch-verification-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Tracking ID</th>
+                                        <th>Your Scan</th>
+                                        <th>Amazon System</th>
+                                        <th>City</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mismatch-verification-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section class="card fade-in" id="verification-section">
                 <div class="card-header">
                     <div class="step-indicator">03</div>
@@ -188,6 +259,20 @@
                     </div>
 
                     <div id="verification-result"></div>
+
+                    <div class="verification-mode-trigger" id="verification-mode-trigger" style="display: none;">
+                        <div class="trigger-panel">
+                            <h3>🔍 Mismatches Detected!</h3>
+                            <p>Found <strong id="trigger-mismatch-count">0</strong> mismatched packages. Enable Verification Mode to easily identify them by scanning.</p>
+                            <button id="enter-verification-mode-btn" class="btn btn-primary btn-lg">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                                Enter Verification Mode
+                            </button>
+                        </div>
+                    </div>
 
                     <div class="comparison-results" id="comparison-section" style="display: none;">
                         

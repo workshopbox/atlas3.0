@@ -63,6 +63,11 @@ let uploadedPolygonData = null; // Stores uploaded polygon JSON
 let correctionData = null; // Stores correction JSON
 let mismatchHistory = {}; // Historical mismatch data
 
+// Verification Mode
+let verificationMode = false;
+let mismatchPackages = []; // Packages that mismatched
+let verifiedMismatches = new Set(); // Tracking IDs that have been verified
+
 // DSP route mapping from JSON files
 const DSP_JSON_FILES = {
     'AMTP': 'routes/AMTP.json',
@@ -1027,17 +1032,15 @@ function showScanResult(message, type) {
 // ==================== FIREBASE: SHARED SCANNED PACKAGES ====================
 async function loadSharedScannedPackages() {
     try {
-        const { collection, query, where, getDocs, orderBy, limit } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        const { collection, query, where, getDocs } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
         
         // Get today's date
         const today = new Date().toISOString().split('T')[0];
         
-        // Load scanned packages from today
+        // Simplified query - just filter by date (no ordering to avoid index requirement)
         const q = query(
             collection(db, 'scanned_packages'),
-            where('scanDate', '==', today),
-            orderBy('timestamp', 'desc'),
-            limit(500) // Limit to last 500 packages
+            where('scanDate', '==', today)
         );
         
         const querySnapshot = await getDocs(q);
@@ -1047,8 +1050,12 @@ async function loadSharedScannedPackages() {
             scannedPackages.push(doc.data());
         });
         
-        // Sort by timestamp (newest first)
-        scannedPackages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        // Sort locally by timestamp (newest first)
+        scannedPackages.sort((a, b) => {
+            const timeA = new Date(a.timestamp).getTime();
+            const timeB = new Date(b.timestamp).getTime();
+            return timeB - timeA;
+        });
         
         updateScannedTable();
         
@@ -1056,8 +1063,46 @@ async function loadSharedScannedPackages() {
         
     } catch (error) {
         console.error('Error loading shared scanned packages:', error);
-        // Fallback to localStorage
-        loadScannedPackages();
+        
+        // If it's an index error, show helpful message
+        if (error.message && error.message.includes('index')) {
+            console.warn('Firebase index required. Creating it now will enable faster queries.');
+            console.warn('For now, loading all documents and filtering locally...');
+            
+            // Fallback: load all documents without filter
+            try {
+                const { collection, getDocs } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+                const querySnapshot = await getDocs(collection(db, 'scanned_packages'));
+                
+                const today = new Date().toISOString().split('T')[0];
+                scannedPackages = [];
+                
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    // Filter locally for today
+                    if (data.scanDate === today) {
+                        scannedPackages.push(data);
+                    }
+                });
+                
+                scannedPackages.sort((a, b) => {
+                    const timeA = new Date(a.timestamp).getTime();
+                    const timeB = new Date(b.timestamp).getTime();
+                    return timeB - timeA;
+                });
+                
+                updateScannedTable();
+                console.log(`Loaded ${scannedPackages.length} packages (fallback mode)`);
+                
+            } catch (fallbackError) {
+                console.error('Fallback also failed:', fallbackError);
+                // Final fallback to localStorage
+                loadScannedPackages();
+            }
+        } else {
+            // Fallback to localStorage for other errors
+            loadScannedPackages();
+        }
     }
 }
 
@@ -1394,6 +1439,205 @@ function compareWithScannedPackages() {
     displayComparisonResults(matches, mismatches, notScanned);
 }
 
+// ==================== VERIFICATION MODE ====================
+function enterVerificationMode() {
+    if (mismatchPackages.length === 0) {
+        alert('No mismatches to verify. Upload Search Results CSV first.');
+        return;
+    }
+    
+    verificationMode = true;
+    verifiedMismatches.clear();
+    
+    // Hide normal scanning section
+    document.getElementById('scanning-section').style.display = 'none';
+    document.getElementById('verification-section').style.display = 'none';
+    
+    // Show verification mode section
+    document.getElementById('verification-mode-section').style.display = 'block';
+    
+    // Update status
+    updateVerificationStatus();
+    
+    // Populate mismatch table
+    populateMismatchVerificationTable();
+    
+    // Focus on input
+    document.getElementById('verification-input').focus();
+    
+    // Scroll to verification section
+    document.getElementById('verification-mode-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function exitVerificationMode() {
+    verificationMode = false;
+    
+    // Show normal sections
+    document.getElementById('scanning-section').style.display = 'block';
+    document.getElementById('verification-section').style.display = 'block';
+    
+    // Hide verification mode section
+    document.getElementById('verification-mode-section').style.display = 'none';
+    
+    // Clear input
+    document.getElementById('verification-input').value = '';
+    document.getElementById('verification-result').innerHTML = '';
+}
+
+function updateVerificationStatus() {
+    document.getElementById('mismatch-total').textContent = mismatchPackages.length;
+    document.getElementById('verified-count').textContent = verifiedMismatches.size;
+    document.getElementById('remaining-count').textContent = mismatchPackages.length - verifiedMismatches.size;
+}
+
+function populateMismatchVerificationTable() {
+    const tbody = document.getElementById('mismatch-verification-tbody');
+    tbody.innerHTML = '';
+    
+    if (mismatchPackages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No mismatches found</td></tr>';
+        return;
+    }
+    
+    mismatchPackages.forEach((item, index) => {
+        const isVerified = verifiedMismatches.has(item.trackingId);
+        const statusClass = isVerified ? 'success' : 'pending';
+        const statusText = isVerified ? '✓ Verified' : 'Pending';
+        
+        const row = document.createElement('tr');
+        row.className = isVerified ? 'verified-row' : '';
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td><strong>${item.trackingId}</strong></td>
+            <td><span class="dsp-badge dsp-${item.scannedDSP.toLowerCase()}">${item.scannedDSP}</span></td>
+            <td><span class="dsp-badge dsp-${item.systemDSP.toLowerCase()}">${item.systemDSP}</span></td>
+            <td>${item.city}</td>
+            <td><span class="status-badge status-${statusClass}">${statusText}</span></td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function verifyPackage(trackingId) {
+    if (!trackingId || trackingId.trim() === '') {
+        showVerificationResult('Please enter a tracking ID', 'error');
+        return;
+    }
+    
+    trackingId = trackingId.trim().toUpperCase();
+    
+    // Check if this package is in the mismatch list
+    const mismatch = mismatchPackages.find(m => m.trackingId === trackingId);
+    
+    if (mismatch) {
+        // THIS IS THE ONE!
+        verifiedMismatches.add(trackingId);
+        updateVerificationStatus();
+        populateMismatchVerificationTable();
+        
+        showVerificationResult({
+            type: 'match',
+            trackingId: trackingId,
+            scannedDSP: mismatch.scannedDSP,
+            systemDSP: mismatch.systemDSP,
+            city: mismatch.city,
+            postal: mismatch.postal
+        });
+        
+        // Auto-clear input after 3 seconds
+        setTimeout(() => {
+            document.getElementById('verification-input').value = '';
+            document.getElementById('verification-input').focus();
+        }, 3000);
+        
+    } else if (verifiedMismatches.has(trackingId)) {
+        // Already verified this one
+        showVerificationResult({
+            type: 'already',
+            trackingId: trackingId
+        });
+        
+        setTimeout(() => {
+            document.getElementById('verification-input').value = '';
+            document.getElementById('verification-input').focus();
+        }, 2000);
+        
+    } else {
+        // Not in mismatch list - this package matched correctly
+        showVerificationResult({
+            type: 'no-match',
+            trackingId: trackingId
+        });
+        
+        setTimeout(() => {
+            document.getElementById('verification-input').value = '';
+            document.getElementById('verification-input').focus();
+        }, 2000);
+    }
+}
+
+function showVerificationResult(data) {
+    const resultDiv = document.getElementById('verification-result');
+    
+    if (typeof data === 'string') {
+        // Simple error message
+        resultDiv.innerHTML = `<div class="result-box result-error">${data}</div>`;
+        return;
+    }
+    
+    if (data.type === 'match') {
+        // FOUND A MISMATCH!
+        resultDiv.innerHTML = `
+            <div class="verification-match">
+                <h2>🎯 THIS IS THE ONE!</h2>
+                <div class="match-details">
+                    <div style="font-size: 1.3rem; margin-bottom: 1rem;">
+                        <strong>Package: ${data.trackingId}</strong>
+                    </div>
+                    <div style="font-size: 1rem; margin-bottom: 1rem;">
+                        ${data.city} ${data.postal}
+                    </div>
+                    <div class="dsp-comparison">
+                        <div class="dsp-box">
+                            <div style="font-size: 0.8rem; opacity: 0.7;">Your Scan</div>
+                            ${data.scannedDSP}
+                        </div>
+                        <div style="font-size: 2rem; align-self: center;">→</div>
+                        <div class="dsp-box">
+                            <div style="font-size: 0.8rem; opacity: 0.7;">Amazon System</div>
+                            ${data.systemDSP}
+                        </div>
+                    </div>
+                    <div style="margin-top: 1.5rem; font-size: 1.1rem;">
+                        ✓ Verified - Move to ${data.systemDSP} staging area
+                    </div>
+                </div>
+            </div>
+        `;
+    } else if (data.type === 'already') {
+        resultDiv.innerHTML = `
+            <div class="verification-already">
+                <strong>⚠️ Already Verified</strong><br>
+                Package ${data.trackingId} was already checked.
+            </div>
+        `;
+    } else if (data.type === 'no-match') {
+        resultDiv.innerHTML = `
+            <div class="verification-no-match">
+                <strong>✓ Not a Mismatch</strong><br>
+                Package ${data.trackingId} was correctly sorted.
+            </div>
+        `;
+    }
+    
+    // Auto-clear after timeout
+    setTimeout(() => {
+        if (data.type !== 'match') {
+            resultDiv.innerHTML = '';
+        }
+    }, 3000);
+}
+
 // ==================== EXTRACT DSP FROM SORT ZONE (NOT USED ANYMORE) ====================
 // This function is kept for reference but not used in comparison
 function extractDSPFromSortZone(sortZone) {
@@ -1405,11 +1649,22 @@ function extractDSPFromSortZone(sortZone) {
 function displayComparisonResults(matches, mismatches, notScanned) {
     document.getElementById('comparison-section').style.display = 'block';
     
+    // Store mismatches for verification mode
+    mismatchPackages = mismatches;
+    
     // Update stats
     document.getElementById('total-compared').textContent = csvData.length;
     document.getElementById('matches-count').textContent = matches.length;
     document.getElementById('mismatches-count').textContent = mismatches.length;
     document.getElementById('not-scanned-count').textContent = notScanned.length;
+    
+    // Show verification mode trigger if there are mismatches
+    if (mismatches.length > 0) {
+        document.getElementById('verification-mode-trigger').style.display = 'block';
+        document.getElementById('trigger-mismatch-count').textContent = mismatches.length;
+    } else {
+        document.getElementById('verification-mode-trigger').style.display = 'none';
+    }
     
     // Populate tables
     populateMismatchesTable(mismatches);
@@ -1679,5 +1934,23 @@ function initializeEventListeners() {
             const tabName = e.target.getAttribute('data-tab');
             switchTab(tabName);
         });
+    });
+    
+    // Verification Mode buttons
+    document.getElementById('enter-verification-mode-btn').addEventListener('click', enterVerificationMode);
+    document.getElementById('exit-verification-btn').addEventListener('click', exitVerificationMode);
+    
+    // Verification scan button
+    document.getElementById('verify-scan-btn').addEventListener('click', () => {
+        const trackingId = document.getElementById('verification-input').value;
+        verifyPackage(trackingId);
+    });
+    
+    // Verification enter key
+    document.getElementById('verification-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            const trackingId = e.target.value;
+            verifyPackage(trackingId);
+        }
     });
 }
